@@ -11,7 +11,9 @@ permissions:
 
 jobs:
   build-apk:
+    name: Build release APK
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -31,14 +33,40 @@ jobs:
       - name: Generate Android project
         run: flutter create --platforms=android --project-name ali_moez --org com.alimoez .
 
-      - name: Install dependencies
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Install Flutter dependencies
         run: flutter pub get
 
-      - name: Build APK
-        run: flutter build apk --release
+      - name: Build APK with retry for Maven rate limits
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4; do
+            echo "APK build attempt ${attempt}/4"
+            if flutter build apk --release; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 4 ]; then
+              delay=$((attempt * 60))
+              echo "Build failed. Waiting ${delay}s before retrying (temporary Maven/Gradle HTTP 429 errors may clear)."
+              sleep "$delay"
+            fi
+          done
+          echo "APK build failed after 4 attempts. Review the first Gradle error above."
+          exit 1
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: Ali-moez-APK
           path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
